@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.env*
+*.cap
+*.pcap
+*.pcapng
+*.hc22000
+*.restore
+recovered.txt
+airwatch-session.json
+saved-search.json
+tools/

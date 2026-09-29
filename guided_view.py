@@ -41,7 +41,7 @@ class GuidedView(ttk.Frame):
             variable=getattr(self.recovery,key,None)
             if isinstance(variable,tk.Variable):variable.set(value)
         exact_ten=(self.recovery.method.get()=='mask' and self.recovery.digits.get() and not any(v.get() for v in (self.recovery.lower,self.recovery.upper,self.recovery.symbols)) and self.recovery.min_len.get()==self.recovery.max_len.get()==10)
-        initial='Wordlist' if self.recovery.method.get()=='wordlist' else 'N#########' if self.recovery.method.get()=='phone' else '10-digit number' if exact_ten else 'Custom pattern'
+        initial='Wordlist' if self.recovery.method.get()=='wordlist' else 'N#########' if self.recovery.method.get()=='phone' else 'State phone numbers' if self.recovery.method.get()=='state_phone' else '10-digit number' if exact_ten else 'Custom pattern'
         self.pattern=tk.StringVar(value=initial)
         self.auto_stop_requested_for=None
         self.events=queue.Queue();self.probing=False;self.probe_at=0;self.ready_prefix=None
@@ -125,12 +125,18 @@ class GuidedView(ttk.Frame):
         ttk.Label(self.recover,text='🔓  Password search',style='Guide.Recovery.TLabel').pack(anchor='w')
         self.new_capture_btn=ttk.Button(self.recover,text='Check new capture',command=self.recovery.analyze_pending_capture)
         row=ttk.Frame(self.recover,style='Card.TFrame');row.pack(fill='x',pady=(12,8))
-        self.pattern_box=ttk.Combobox(row,textvariable=self.pattern,values=('10-digit number','N#########','Wordlist','Custom pattern'),state='readonly',width=22)
+        self.pattern_box=ttk.Combobox(row,textvariable=self.pattern,values=('10-digit number','N#########','State phone numbers','Wordlist','Custom pattern'),state='readonly',width=22)
         self.pattern_box.pack(side='left');self.pattern_box.bind('<<ComboboxSelected>>',self.choose_pattern)
         self.pattern_help=ttk.Label(row,text='',style='Card.TLabel');self.pattern_help.pack(side='left',padx=14)
         self.word_row=ttk.Frame(self.recover,style='Card.TFrame')
         ttk.Entry(self.word_row,textvariable=self.recovery.wordlist_path).pack(side='left',fill='x',expand=True)
         ttk.Button(self.word_row,text='Choose wordlist…',command=self.recovery.browse_wordlist).pack(side='left',padx=(8,0))
+        self.state_row=ttk.Frame(self.recover,style='Card.TFrame')
+        ttk.Label(self.state_row,text='State',style='Card.TLabel').pack(side='left',padx=(0,8))
+        self.state_combo=ttk.Combobox(self.state_row,textvariable=self.recovery.phone_state,
+                                      values=self.recovery.state_combo.cget('values'),state='readonly',width=24)
+        self.state_combo.pack(side='left')
+        self.state_combo.bind('<<ComboboxSelected>>',self.choose_state)
         self.custom_row=ttk.Frame(self.recover,style='Card.TFrame')
         for label,var in [('a–z',self.recovery.lower),('A–Z',self.recovery.upper),('0–9',self.recovery.digits),('Symbols',self.recovery.symbols)]:
             ttk.Checkbutton(self.custom_row,text=label,variable=var,command=self.recovery.update_estimate).pack(side='left',padx=(0,12))
@@ -173,7 +179,7 @@ class GuidedView(ttk.Frame):
             self.reconnect_host.pack_forget()
             self.reconnect_toggle.configure(text='Show reconnect controls')
     def save_settings(self):
-        keys=('method','wordlist_path','lower','upper','digits','symbols','min_len','max_len','fast_workload','optimized','temperature','runtime')
+        keys=('method','phone_state','wordlist_path','lower','upper','digits','symbols','min_len','max_len','fast_workload','optimized','temperature','runtime')
         values={}
         for key in keys:
             try:values[key]=getattr(self.recovery,key).get()
@@ -214,13 +220,17 @@ class GuidedView(ttk.Frame):
 
     def choose_pattern(self,_event=None):
         r=self.recovery;choice=self.pattern.get()
-        self.word_row.pack_forget();self.custom_row.pack_forget()
+        self.word_row.pack_forget();self.custom_row.pack_forget();self.state_row.pack_forget()
         if choice=='10-digit number':
             r.method.set('mask');r.lower.set(False);r.upper.set(False);r.digits.set(True);r.symbols.set(False);r.min_len.set(10);r.max_len.set(10)
             self.pattern_help.configure(text='Exactly 10 digits, including leading zeroes.')
         elif choice=='N#########':
             r.method.set('phone')
             self.pattern_help.configure(text='No dashes. First digit 2–9; then any 9 digits.')
+        elif choice=='State phone numbers':
+            r.method.set('state_phone')
+            self.state_row.pack(fill='x',pady=4,before=self.gpu_row)
+            self.choose_state()
         elif choice=='Wordlist':
             r.method.set('wordlist');self.word_row.pack(fill='x',pady=4,before=self.gpu_row)
             self.pattern_help.configure(text='Try passwords from the file you choose.')
@@ -228,6 +238,13 @@ class GuidedView(ttk.Frame):
             r.method.set('mask');self.custom_row.pack(fill='x',pady=4,before=self.gpu_row)
             self.pattern_help.configure(text='Choose the characters and length you know.')
         r.update_estimate()
+
+    def choose_state(self,_event=None):
+        state=self.recovery.phone_state.get()
+        try:codes=self.recovery._attack_options()['codes'] if self.recovery.method.get()=='state_phone' else []
+        except ValueError:codes=[]
+        self.pattern_help.configure(text=f'{state}: {len(codes)} area codes, then 7 digits. No dashes.')
+        self.recovery.update_estimate()
 
     def choose_gpu(self,_event=None):
         match=next((d for d in self.recovery.devices if d.name==self.gpu_var.get()),None)
@@ -255,7 +272,12 @@ class GuidedView(ttk.Frame):
 
     def start_network_scan(self):
         app=self.app
-        if app.proc or app.admin_busy or app.stopping:return
+        if app.proc:
+            self.notice='Stop the current capture before starting a new scan.' if app.capture_focused else 'A network scan is already running.'
+            return
+        if app.admin_busy or app.stopping:
+            self.notice='Please wait for the adapter to finish, then tap Find networks again.'
+            return
         self.notice=''
         try:
             if self.prepare_adapter():
@@ -509,7 +531,7 @@ class GuidedView(ttk.Frame):
         self.progress.configure(value=r.progress.cget('value'))
         self.reveal.configure(text='Hide password' if r.reveal_btn.cget('text')=='Hide' else 'Reveal password')
         self.reveal.state(['!disabled'] if r.recovered_plain else ['disabled'])
-        for widget in (self.pattern_box,self.gpu):widget.configure(state='disabled' if r.job_running else 'readonly')
+        for widget in (self.pattern_box,self.state_combo,self.gpu):widget.configure(state='disabled' if r.job_running else 'readonly')
         self.estimate_btn.state(['disabled'] if r.job_running or r.estimate_proc is not None or not r.ready_hash else ['!disabled'])
         self.after(250,self.refresh)
 

@@ -120,6 +120,7 @@ class AirWatch(tk.Tk):
             button.pack(side="left",padx=(0,5))
             self.nav_buttons[name]=button
         ttk.Button(bar,text="↻ Restore Wi-Fi",command=self.restore_wifi,style="WiFi.TButton").pack(side="right")
+        ttk.Button(bar,text="🔎 New Wi-Fi scan",command=self.new_scan,style="Accent.TButton").pack(side="right",padx=(0,10))
         self._active_tab="Networks"
         self.nav_buttons["Networks"].configure(style="NavActive.TButton")
 
@@ -137,6 +138,18 @@ class AirWatch(tk.Tk):
         self._active_tab=name
         for label,button in self.nav_buttons.items():
             button.configure(style="NavActive.TButton" if label==name else "Nav.TButton")
+
+    def new_scan(self):
+        """Keep the scan entry point visible even while offline recovery runs."""
+        self.navigate("Networks")
+        if self.proc:
+            if self.capture_focused:
+                self.guided.notice="Stop the current capture before starting a new scan."
+            return
+        if self.admin_busy or self.stopping:
+            self.guided.notice="Please wait for the adapter to finish, then tap New Wi-Fi scan again."
+            return
+        self.after(50,self.guided.start_network_scan)
 
     def _build(self):
         root = ttk.Frame(self, padding=12); root.pack(fill="both", expand=True)

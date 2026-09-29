@@ -16,6 +16,7 @@ from tkinter import ttk, filedialog, messagebox
 
 from handshake_assistant.devices import discover, preferred_device, recovery_environment
 from recovery_session import write_manifest, remember, load_saved, clear_if_current, process_active
+from phone_area_codes import STATE_AREA_CODES, STATE_NAMES, NANPA_FILE_DATE
 
 HASHCAT = shutil.which("hashcat")
 MAX_EXPANDED_WORDLIST = 2 * 1024**3
@@ -23,6 +24,7 @@ DISK_RESERVE = 1024**3
 PHONE_MASK = '?2?d?d?d?d?d?d?d?d?d'
 PHONE_CHARSET = '23456789'
 PHONE_TOTAL = 8_000_000_000
+STATE_LINE_TOTAL = 10_000_000
 
 ROCKYOU = next((Path(p) for p in (
     "/usr/share/wordlists/rockyou.txt",
@@ -90,6 +92,7 @@ class RecoveryPanel(ttk.Frame):
         self.runtime=tk.IntVar(value=0)
         self.capture_path = tk.StringVar()
         self.method = tk.StringVar(value="wordlist")
+        self.phone_state = tk.StringVar(value="Illinois")
         self.wordlist_path = tk.StringVar(value=str(ROCKYOU) if ROCKYOU else "")
         self.lower = tk.BooleanVar(value=True)
         self.upper = tk.BooleanVar(value=False)
@@ -163,6 +166,12 @@ class RecoveryPanel(ttk.Frame):
         ttk.Radiobutton(methods, text="Wordlist", variable=self.method, value="wordlist", command=self.update_estimate).pack(side="left")
         ttk.Radiobutton(methods, text="Brute force mask", variable=self.method, value="mask", command=self.update_estimate).pack(side="left", padx=(18,0))
         ttk.Radiobutton(methods, text="N#########", variable=self.method, value="phone", command=self.update_estimate).pack(side="left", padx=(18,0))
+        ttk.Radiobutton(methods, text="By state", variable=self.method, value="state_phone", command=self.update_estimate).pack(side="left", padx=(18,0))
+        state_row=ttk.Frame(options,style="Card.TFrame");state_row.pack(anchor="w",pady=(2,4))
+        ttk.Label(state_row,text="State",style="Card.TLabel").pack(side="left",padx=(0,7))
+        self.state_combo=ttk.Combobox(state_row,textvariable=self.phone_state,values=STATE_NAMES,state="readonly",width=24)
+        self.state_combo.pack(side="left")
+        self.state_combo.bind("<<ComboboxSelected>>",lambda _e:self.update_estimate())
         wordrow = ttk.Frame(options, style="Card.TFrame"); wordrow.pack(fill="x", pady=(4,4))
         ttk.Entry(wordrow, textvariable=self.wordlist_path).pack(side="left", fill="x", expand=True)
         ttk.Button(wordrow, text="Choose list…", command=self.browse_wordlist).pack(side="left", padx=(6,0))
@@ -396,6 +405,10 @@ class RecoveryPanel(ttk.Frame):
         if self.method.get()=="phone":
             self.keyspace_var.set("N######### · N is 2–9, then any 9 digits · 8 billion combinations. No dashes; unassigned numbers are included.")
             return
+        if self.method.get()=="state_phone":
+            state=self.phone_state.get();codes=STATE_AREA_CODES.get(state,())
+            self.keyspace_var.set(f"{state} · {len(codes)} area codes · {compact_number(len(codes)*STATE_LINE_TOTAL)} digit combinations. Codes: {NANPA_FILE_DATE}.")
+            return
         try:
             minimum=int(self.min_len.get());maximum=int(self.max_len.get())
         except (ValueError,tk.TclError):
@@ -467,6 +480,11 @@ class RecoveryPanel(ttk.Frame):
             return {"mode":"wordlist","path":str(path)}
         if self.method.get()=="phone":
             return {"mode":"phone","mask":PHONE_MASK,"charset":PHONE_CHARSET,"total":PHONE_TOTAL}
+        if self.method.get()=="state_phone":
+            state=self.phone_state.get();codes=STATE_AREA_CODES.get(state)
+            if not codes:raise ValueError("Choose a state with available area codes.")
+            return {"mode":"state_phone","state":state,"codes":list(codes),
+                    "total":len(codes)*STATE_LINE_TOTAL}
         try:
             minimum=int(self.min_len.get());maximum=int(self.max_len.get())
         except (ValueError,tk.TclError):
@@ -530,6 +548,8 @@ class RecoveryPanel(ttk.Frame):
                             count+=block.count(b"\n")
                     total=count
                 elif options["mode"]=="phone":
+                    total=options["total"]
+                elif options["mode"]=="state_phone":
                     total=options["total"]
                 else:
                     total=sum(options["size"]**n for n in range(options["minimum"],options["maximum"]+1))
@@ -635,6 +655,12 @@ class RecoveryPanel(ttk.Frame):
                 elif options["mode"]=="phone":
                     self.events.put(("keyspace",options["total"]))
                     args += ["-a","3","-2",options["charset"],hashfile,options["mask"]]
+                elif options["mode"]=="state_phone":
+                    maskfile=attack_dir/"state-phone-masks.hcmask"
+                    maskfile.write_text("".join(code+"?d"*7+"\n" for code in options["codes"]))
+                    metadata['mask_file_path']=str(maskfile)
+                    self.events.put(("keyspace",options["total"]))
+                    args += ["-a","3",hashfile,str(maskfile)]
                 else:
                     mask="?1"*options["maximum"]
                     total=sum(options["size"]**n for n in range(options["minimum"],options["maximum"]+1))
@@ -771,6 +797,9 @@ class RecoveryPanel(ttk.Frame):
         if metadata.get('wordlist_path') and not Path(metadata['wordlist_path']).is_file():
             self.state_var.set('The saved wordlist is missing. Restore it to its original path to resume.')
             return
+        if metadata.get('mask_file_path') and not Path(metadata['mask_file_path']).is_file():
+            self.state_var.set('The saved state mask file is missing. Restore it to resume.')
+            return
         self.saved_session=metadata
         self.active_target=dict(metadata.get('target') or {})
         self.active_options=metadata.get('attack_options')
@@ -847,13 +876,16 @@ class RecoveryPanel(ttk.Frame):
             except ValueError:return
         if not (isinstance(mask,str) and isinstance(point,int) and 0<=point<10**16):
             return
-        if options.get('mode')=='phone' and mask==PHONE_MASK:
+        if options.get('mode')=='state_phone' and mask in {code+'?d'*7 for code in options.get('codes',())}:
+            charset_flag=None
+        elif options.get('mode')=='phone' and mask==PHONE_MASK:
             charset_flag='-2'
         elif options.get('mode')=='mask' and re.fullmatch(r'(?:\?1)+',mask):
             charset_flag='-1'
         else:return
         charset=options.get('charset')
-        if not charset or not HASHCAT:return
+        if charset_flag and not charset:return
+        if not HASHCAT:return
         self.sample_inflight=True
         self.last_sample_at=time.monotonic()
         def worker():
@@ -864,8 +896,10 @@ class RecoveryPanel(ttk.Frame):
                 keyspaces=self.sample_keyspaces.get(cache_key)
                 if not keyspaces:
                     def base_size(hash_mode):
-                        args=[HASHCAT,'--keyspace','-a','3',charset_flag,charset,mask]
+                        args=[HASHCAT,'--keyspace','-a','3']
                         if hash_mode:args[2:2]=['-m',hash_mode]
+                        if charset_flag:args += [charset_flag,charset]
+                        args.append(mask)
                         result=subprocess.run(args,capture_output=True,text=True,timeout=4)
                         if result.returncode:raise ValueError('Could not read mask keyspace')
                         return int(result.stdout.strip())
@@ -874,8 +908,10 @@ class RecoveryPanel(ttk.Frame):
                 target_base,stdout_base=keyspaces
                 if not target_base or not stdout_base:raise ValueError('Empty mask keyspace')
                 sample_point=min(stdout_base-1,point*stdout_base//target_base)
-                process=subprocess.Popen([HASHCAT,'--stdout','-a','3','--skip',str(sample_point),
-                                          '--limit','1',charset_flag,charset,mask],
+                args=[HASHCAT,'--stdout','-a','3','--skip',str(sample_point),'--limit','1']
+                if charset_flag:args += [charset_flag,charset]
+                args.append(mask)
+                process=subprocess.Popen(args,
                                          stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
                                          start_new_session=True)
                 if select.select([process.stdout],[],[],4)[0]:
@@ -956,13 +992,24 @@ class RecoveryPanel(ttk.Frame):
                 elif kind=="status":
                     data=event[1]
                     done,total=data.get("progress",[0,0])[:2]
+                    if self.active_options and self.active_options.get('mode')=='state_phone' and total:
+                        guess=data.get('guess') or {}
+                        count=len(self.active_options.get('codes',()))
+                        try:index=int(guess.get('guess_base_offset',1))
+                        except (TypeError,ValueError):index=1
+                        if count:
+                            done=(max(1,min(count,index))-1)*total+done
+                            total*=count
                     percent=100*done/total if total else 0
                     self.progress.configure(value=min(100,percent))
                     self.progress_var.set(f"{percent:.1f}%")
                     speed=sum(max(0,int(device.get("speed",0))) for device in data.get("devices",[]))
                     self.speed_var.set("Speed: "+compact_number(speed)+" guesses/s")
                     eta=int(data.get("estimated_stop",0))
-                    remaining=max(0,eta-time.time()) if eta>time.time() else ((total-done)/speed if speed else None)
+                    if self.active_options and self.active_options.get('mode')=='state_phone':
+                        remaining=(total-done)/speed if speed else None
+                    else:
+                        remaining=max(0,eta-time.time()) if eta>time.time() else ((total-done)/speed if speed else None)
                     self.eta_var.set("ETA: "+duration(remaining))
                     states={3:"Running",4:"Paused",5:"Exhausted",6:"Recovered",7:"Aborted",8:"Stopped",10:"Saving checkpoint"}
                     self.state_var.set('Saving at the next checkpoint…' if self.pause_requested else states.get(data.get("status"),"Running"))

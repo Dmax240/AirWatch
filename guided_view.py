@@ -36,6 +36,7 @@ class GuidedView(ttk.Frame):
         self.context_var=tk.StringVar()
         self.action_var=tk.StringVar()
         self.new_search_label=tk.StringVar(value='▶ Start selected search')
+        self.hash_file_var=tk.StringVar(value='No hash loaded')
         self.gpu_var=tk.StringVar()
         settings=load_preferences()
         for key,value in settings.items():
@@ -125,6 +126,9 @@ class GuidedView(ttk.Frame):
         self.recover=ttk.Frame(self.body,style='Card.TFrame',padding=20)
         ttk.Label(self.recover,text='🔓  Password search',style='Guide.Recovery.TLabel').pack(anchor='w')
         self.new_capture_btn=ttk.Button(self.recover,text='Check new capture',command=self.recovery.analyze_pending_capture)
+        hash_row=ttk.Frame(self.recover,style='Card.TFrame');hash_row.pack(fill='x',pady=(12,0))
+        ttk.Label(hash_row,text='Loaded hash file',style='Card.TLabel').pack(side='left',padx=(0,10))
+        ttk.Entry(hash_row,textvariable=self.hash_file_var,state='readonly').pack(side='left',fill='x',expand=True)
         row=ttk.Frame(self.recover,style='Card.TFrame');row.pack(fill='x',pady=(12,8))
         self.pattern_box=ttk.Combobox(row,textvariable=self.pattern,values=('10-digit number','N#########','State phone numbers','Wordlist','Custom pattern'),state='readonly',width=22)
         self.pattern_box.pack(side='left');self.pattern_box.bind('<<ComboboxSelected>>',self.choose_pattern)
@@ -393,6 +397,7 @@ class GuidedView(ttk.Frame):
     def refresh(self):
         app=self.app;r=self.recovery;c=app.coach_panel
         if app.closing:return
+        self.hash_file_var.set(str(r.ready_hash) if r.ready_hash else 'No hash loaded')
         try:
             for _ in range(10):
                 kind,prefix,target_bssid,usable=self.events.get_nowait();self.probing=False

@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+from phone_area_codes import STATE_AREA_CODES
 
 
 def settings_path():
@@ -13,7 +14,10 @@ def settings_path():
 def clean(data):
     if not isinstance(data,dict):return {}
     result={}
-    if data.get('method') in ('wordlist','mask'):result['method']=data['method']
+    if data.get('method') in ('wordlist','mask','phone','state_phone'):
+        result['method']=data['method']
+    if data.get('phone_state') in STATE_AREA_CODES:
+        result['phone_state']=data['phone_state']
     for key in ('lower','upper','digits','symbols','fast_workload','optimized','auto_ai'):
         if isinstance(data.get(key),bool):result[key]=data[key]
     for key,low,high in (('min_len',8,63),('max_len',8,63),('temperature',60,90),('runtime',0,86400)):

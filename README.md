@@ -12,7 +12,7 @@ Run `./start-airwatch.sh` from this folder. The app asks PolicyKit for administr
 
 1. **Networks:** Choose your network. AirWatch prefers an idle adapter so an existing Wi-Fi connection can stay online.
 2. **Capture:** Start focused capture. A usable record for the selected access point ends capture, restores the adapter, and opens analysis. A broad scan alone does not confirm a handshake.
-3. **Recovery:** Choose a wordlist or a pattern and GPU. The offline search stops after the first recovered passphrase. If it exhausts the chosen search space, it has not found a match there.
+3. **Recovery:** Choose a wordlist or a pattern and GPU. **State phone numbers** can try digits (`2171234567`), two dashes (`217-123-4567`), or both; only the selected state's area codes are used. The offline search stops after the first recovered passphrase. If it exhausts the chosen search space, it has not found a match there.
 
 You can open **Networks → Find networks** while Recovery runs. A scan and focused capture can use another adapter without pausing Hashcat. A new capture is saved separately; **Check new capture** becomes available after the current search stops. If only your connected adapter can scan, AirWatch asks before switching it to monitor mode.
 

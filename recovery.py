@@ -25,6 +25,17 @@ PHONE_MASK = '?2?d?d?d?d?d?d?d?d?d'
 PHONE_CHARSET = '23456789'
 PHONE_TOTAL = 8_000_000_000
 STATE_LINE_TOTAL = 10_000_000
+STATE_PHONE_FORMATS = ('Both styles', 'Digits only', 'With dashes')
+
+
+def state_phone_masks(codes, phone_format):
+    """Make one Hashcat mask per area code and requested phone-number style."""
+    if phone_format not in STATE_PHONE_FORMATS:
+        raise ValueError('Choose a phone number format.')
+    plain=[code+'?d'*7 for code in codes]
+    dashed=[code+'-'+'?d'*3+'-'+'?d'*4 for code in codes]
+    return (plain+dashed if phone_format=='Both styles' else
+            dashed if phone_format=='With dashes' else plain)
 
 ROCKYOU = next((Path(p) for p in (
     "/usr/share/wordlists/rockyou.txt",
@@ -93,6 +104,7 @@ class RecoveryPanel(ttk.Frame):
         self.capture_path = tk.StringVar()
         self.method = tk.StringVar(value="wordlist")
         self.phone_state = tk.StringVar(value="Illinois")
+        self.phone_format = tk.StringVar(value="Both styles")
         self.wordlist_path = tk.StringVar(value=str(ROCKYOU) if ROCKYOU else "")
         self.lower = tk.BooleanVar(value=True)
         self.upper = tk.BooleanVar(value=False)
@@ -172,6 +184,11 @@ class RecoveryPanel(ttk.Frame):
         self.state_combo=ttk.Combobox(state_row,textvariable=self.phone_state,values=STATE_NAMES,state="readonly",width=24)
         self.state_combo.pack(side="left")
         self.state_combo.bind("<<ComboboxSelected>>",lambda _e:self.update_estimate())
+        ttk.Label(state_row,text="Format",style="Card.TLabel").pack(side="left",padx=(16,7))
+        self.phone_format_combo=ttk.Combobox(state_row,textvariable=self.phone_format,
+                                              values=STATE_PHONE_FORMATS,state="readonly",width=17)
+        self.phone_format_combo.pack(side="left")
+        self.phone_format_combo.bind("<<ComboboxSelected>>",lambda _e:self.update_estimate())
         wordrow = ttk.Frame(options, style="Card.TFrame"); wordrow.pack(fill="x", pady=(4,4))
         ttk.Entry(wordrow, textvariable=self.wordlist_path).pack(side="left", fill="x", expand=True)
         ttk.Button(wordrow, text="Choose list…", command=self.browse_wordlist).pack(side="left", padx=(6,0))
@@ -407,7 +424,10 @@ class RecoveryPanel(ttk.Frame):
             return
         if self.method.get()=="state_phone":
             state=self.phone_state.get();codes=STATE_AREA_CODES.get(state,())
-            self.keyspace_var.set(f"{state} · {len(codes)} area codes · {compact_number(len(codes)*STATE_LINE_TOTAL)} digit combinations. Codes: {NANPA_FILE_DATE}.")
+            try:masks=state_phone_masks(codes,self.phone_format.get())
+            except ValueError:
+                self.keyspace_var.set('Choose a phone number format.');return
+            self.keyspace_var.set(f"{state} · {len(codes)} area codes · {self.phone_format.get().lower()} · {compact_number(len(masks)*STATE_LINE_TOTAL)} combinations. Codes: {NANPA_FILE_DATE}.")
             return
         try:
             minimum=int(self.min_len.get());maximum=int(self.max_len.get())
@@ -483,8 +503,10 @@ class RecoveryPanel(ttk.Frame):
         if self.method.get()=="state_phone":
             state=self.phone_state.get();codes=STATE_AREA_CODES.get(state)
             if not codes:raise ValueError("Choose a state with available area codes.")
+            masks=state_phone_masks(codes,self.phone_format.get())
             return {"mode":"state_phone","state":state,"codes":list(codes),
-                    "total":len(codes)*STATE_LINE_TOTAL}
+                    "phone_format":self.phone_format.get(),"masks":masks,
+                    "total":len(masks)*STATE_LINE_TOTAL}
         try:
             minimum=int(self.min_len.get());maximum=int(self.max_len.get())
         except (ValueError,tk.TclError):
@@ -618,7 +640,7 @@ class RecoveryPanel(ttk.Frame):
                   'hashfile':str(hashfile),'result_path':str(self.result_path),
                   'run_dir':str(run_dir),'capture_path':self.capture_path.get(),
                   'target':dict(self.app.selected_target or {}),'attack_options':options,
-                  'pid':0,'status':'preparing'}
+                  'runtime_limit':int(self.runtime.get()),'pid':0,'status':'preparing'}
         def worker():
             try:
                 args=[HASHCAT,*performance,"-m","22000","--status","--status-json","--status-timer","2", "--session",session_name,
@@ -657,7 +679,7 @@ class RecoveryPanel(ttk.Frame):
                     args += ["-a","3","-2",options["charset"],hashfile,options["mask"]]
                 elif options["mode"]=="state_phone":
                     maskfile=attack_dir/"state-phone-masks.hcmask"
-                    maskfile.write_text("".join(code+"?d"*7+"\n" for code in options["codes"]))
+                    maskfile.write_text("".join(mask+"\n" for mask in options["masks"]))
                     metadata['mask_file_path']=str(maskfile)
                     self.events.put(("keyspace",options["total"]))
                     args += ["-a","3",hashfile,str(maskfile)]
@@ -876,7 +898,10 @@ class RecoveryPanel(ttk.Frame):
             except ValueError:return
         if not (isinstance(mask,str) and isinstance(point,int) and 0<=point<10**16):
             return
-        if options.get('mode')=='state_phone' and mask in {code+'?d'*7 for code in options.get('codes',())}:
+        valid_state_masks=()
+        if options.get('mode')=='state_phone':
+            valid_state_masks=options.get('masks') or state_phone_masks(options.get('codes',()),'Digits only')
+        if options.get('mode')=='state_phone' and mask in valid_state_masks:
             charset_flag=None
         elif options.get('mode')=='phone' and mask==PHONE_MASK:
             charset_flag='-2'
@@ -996,7 +1021,7 @@ class RecoveryPanel(ttk.Frame):
                     done,total=data.get("progress",[0,0])[:2]
                     if self.active_options and self.active_options.get('mode')=='state_phone' and total:
                         guess=data.get('guess') or {}
-                        count=len(self.active_options.get('codes',()))
+                        count=len(self.active_options.get('masks') or self.active_options.get('codes',()))
                         try:index=int(guess.get('guess_base_offset',1))
                         except (TypeError,ValueError):index=1
                         if count:
@@ -1063,7 +1088,12 @@ class RecoveryPanel(ttk.Frame):
                         except (OSError,ValueError):pass
                         self.saved_session=load_saved()
                         self.resume_btn.configure(state='normal' if self.saved_session else 'disabled')
-                        self.state_var.set('Paused and saved. You can close AirWatch.' if self.saved_session else 'Checkpoint saved in results folder. Use Open saved… later.')
+                        if self.saved_session and self.pause_requested:
+                            self.state_var.set('Paused and saved. You can close AirWatch.')
+                        elif self.saved_session and self.saved_session.get('runtime_limit'):
+                            self.state_var.set('Time limit reached. Search saved. Set Stop after to 0 for a new search without a limit.')
+                        else:
+                            self.state_var.set('Search stopped. Checkpoint saved in results folder.')
                         self.app.update_workflow(stage=5,note='Search checkpoint saved. Resume later without starting over.')
                     elif event[1]==1:
                         if self.session_manifest:clear_if_current(self.session_manifest)

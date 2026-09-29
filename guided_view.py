@@ -142,6 +142,11 @@ class GuidedView(ttk.Frame):
                                       values=self.recovery.state_combo.cget('values'),state='readonly',width=24)
         self.state_combo.pack(side='left')
         self.state_combo.bind('<<ComboboxSelected>>',self.choose_state)
+        ttk.Label(self.state_row,text='Format',style='Card.TLabel').pack(side='left',padx=(16,8))
+        self.phone_format_combo=ttk.Combobox(self.state_row,textvariable=self.recovery.phone_format,
+                                              values=self.recovery.phone_format_combo.cget('values'),state='readonly',width=17)
+        self.phone_format_combo.pack(side='left')
+        self.phone_format_combo.bind('<<ComboboxSelected>>',self.choose_state)
         self.custom_row=ttk.Frame(self.recover,style='Card.TFrame')
         for label,var in [('a–z',self.recovery.lower),('A–Z',self.recovery.upper),('0–9',self.recovery.digits),('Symbols',self.recovery.symbols)]:
             ttk.Checkbutton(self.custom_row,text=label,variable=var,command=self.recovery.update_estimate).pack(side='left',padx=(0,12))
@@ -191,7 +196,7 @@ class GuidedView(ttk.Frame):
             self.reconnect_host.pack_forget()
             self.reconnect_toggle.configure(text='Show reconnect controls')
     def save_settings(self):
-        keys=('method','phone_state','wordlist_path','lower','upper','digits','symbols','min_len','max_len','fast_workload','optimized','temperature','runtime')
+        keys=('method','phone_state','phone_format','wordlist_path','lower','upper','digits','symbols','min_len','max_len','fast_workload','optimized','temperature','runtime')
         values={}
         for key in keys:
             try:values[key]=getattr(self.recovery,key).get()
@@ -254,9 +259,12 @@ class GuidedView(ttk.Frame):
 
     def choose_state(self,_event=None):
         state=self.recovery.phone_state.get()
-        try:codes=self.recovery._attack_options()['codes'] if self.recovery.method.get()=='state_phone' else []
-        except ValueError:codes=[]
-        self.pattern_help.configure(text=f'{state}: {len(codes)} area codes, then 7 digits. No dashes.')
+        try:options=self.recovery._attack_options() if self.recovery.method.get()=='state_phone' else {}
+        except ValueError:options={}
+        codes=options.get('codes',())
+        style=self.recovery.phone_format.get()
+        example='2171234567 + 217-123-4567' if style=='Both styles' else '217-123-4567' if style=='With dashes' else '2171234567'
+        self.pattern_help.configure(text=f'{state}: {len(codes)} area codes · {example}')
         self.recovery.update_estimate()
         self.update_start_label()
 
@@ -558,7 +566,7 @@ class GuidedView(ttk.Frame):
         self.progress.configure(value=r.progress.cget('value'))
         self.reveal.configure(text='Hide password' if r.reveal_btn.cget('text')=='Hide' else 'Reveal password')
         self.reveal.state(['!disabled'] if r.recovered_plain else ['disabled'])
-        for widget in (self.pattern_box,self.state_combo,self.gpu):widget.configure(state='disabled' if r.job_running else 'readonly')
+        for widget in (self.pattern_box,self.state_combo,self.phone_format_combo,self.gpu):widget.configure(state='disabled' if r.job_running else 'readonly')
         self.estimate_btn.state(['disabled'] if r.job_running or r.estimate_proc is not None or not r.ready_hash else ['!disabled'])
         self.after(250,self.refresh)
 

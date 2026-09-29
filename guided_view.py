@@ -41,7 +41,7 @@ class GuidedView(ttk.Frame):
             variable=getattr(self.recovery,key,None)
             if isinstance(variable,tk.Variable):variable.set(value)
         exact_ten=(self.recovery.method.get()=='mask' and self.recovery.digits.get() and not any(v.get() for v in (self.recovery.lower,self.recovery.upper,self.recovery.symbols)) and self.recovery.min_len.get()==self.recovery.max_len.get()==10)
-        initial='Wordlist' if self.recovery.method.get()=='wordlist' else '10-digit number' if exact_ten else 'Custom pattern'
+        initial='Wordlist' if self.recovery.method.get()=='wordlist' else 'N#########' if self.recovery.method.get()=='phone' else '10-digit number' if exact_ten else 'Custom pattern'
         self.pattern=tk.StringVar(value=initial)
         self.auto_stop_requested_for=None
         self.events=queue.Queue();self.probing=False;self.probe_at=0;self.ready_prefix=None
@@ -125,7 +125,7 @@ class GuidedView(ttk.Frame):
         ttk.Label(self.recover,text='🔓  Password search',style='Guide.Recovery.TLabel').pack(anchor='w')
         self.new_capture_btn=ttk.Button(self.recover,text='Check new capture',command=self.recovery.analyze_pending_capture)
         row=ttk.Frame(self.recover,style='Card.TFrame');row.pack(fill='x',pady=(12,8))
-        self.pattern_box=ttk.Combobox(row,textvariable=self.pattern,values=('10-digit number','Wordlist','Custom pattern'),state='readonly',width=22)
+        self.pattern_box=ttk.Combobox(row,textvariable=self.pattern,values=('10-digit number','N#########','Wordlist','Custom pattern'),state='readonly',width=22)
         self.pattern_box.pack(side='left');self.pattern_box.bind('<<ComboboxSelected>>',self.choose_pattern)
         self.pattern_help=ttk.Label(row,text='',style='Card.TLabel');self.pattern_help.pack(side='left',padx=14)
         self.word_row=ttk.Frame(self.recover,style='Card.TFrame')
@@ -218,6 +218,9 @@ class GuidedView(ttk.Frame):
         if choice=='10-digit number':
             r.method.set('mask');r.lower.set(False);r.upper.set(False);r.digits.set(True);r.symbols.set(False);r.min_len.set(10);r.max_len.set(10)
             self.pattern_help.configure(text='Exactly 10 digits, including leading zeroes.')
+        elif choice=='N#########':
+            r.method.set('phone')
+            self.pattern_help.configure(text='No dashes. First digit 2–9; then any 9 digits.')
         elif choice=='Wordlist':
             r.method.set('wordlist');self.word_row.pack(fill='x',pady=4,before=self.gpu_row)
             self.pattern_help.configure(text='Try passwords from the file you choose.')

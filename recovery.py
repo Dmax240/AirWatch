@@ -20,6 +20,9 @@ from recovery_session import write_manifest, remember, load_saved, clear_if_curr
 HASHCAT = shutil.which("hashcat")
 MAX_EXPANDED_WORDLIST = 2 * 1024**3
 DISK_RESERVE = 1024**3
+PHONE_MASK = '?2?d?d?d?d?d?d?d?d?d'
+PHONE_CHARSET = '23456789'
+PHONE_TOTAL = 8_000_000_000
 
 ROCKYOU = next((Path(p) for p in (
     "/usr/share/wordlists/rockyou.txt",
@@ -159,6 +162,7 @@ class RecoveryPanel(ttk.Frame):
         methods = ttk.Frame(options, style="Card.TFrame"); methods.pack(anchor="w", pady=(9,5))
         ttk.Radiobutton(methods, text="Wordlist", variable=self.method, value="wordlist", command=self.update_estimate).pack(side="left")
         ttk.Radiobutton(methods, text="Brute force mask", variable=self.method, value="mask", command=self.update_estimate).pack(side="left", padx=(18,0))
+        ttk.Radiobutton(methods, text="N#########", variable=self.method, value="phone", command=self.update_estimate).pack(side="left", padx=(18,0))
         wordrow = ttk.Frame(options, style="Card.TFrame"); wordrow.pack(fill="x", pady=(4,4))
         ttk.Entry(wordrow, textvariable=self.wordlist_path).pack(side="left", fill="x", expand=True)
         ttk.Button(wordrow, text="Choose list…", command=self.browse_wordlist).pack(side="left", padx=(6,0))
@@ -389,6 +393,9 @@ class RecoveryPanel(ttk.Frame):
             path=self.wordlist_path.get()
             self.keyspace_var.set("Wordlist search: one pass through the selected list. Live speed and ETA appear after Hashcat starts." if path else "Choose a wordlist, or click Rockyou.")
             return
+        if self.method.get()=="phone":
+            self.keyspace_var.set("N######### · N is 2–9, then any 9 digits · 8 billion combinations. No dashes; unassigned numbers are included.")
+            return
         try:
             minimum=int(self.min_len.get());maximum=int(self.max_len.get())
         except (ValueError,tk.TclError):
@@ -458,6 +465,8 @@ class RecoveryPanel(ttk.Frame):
             path=Path(self.wordlist_path.get()).expanduser()
             if not path.is_file():raise ValueError("Choose an existing wordlist or click Rockyou.")
             return {"mode":"wordlist","path":str(path)}
+        if self.method.get()=="phone":
+            return {"mode":"phone","mask":PHONE_MASK,"charset":PHONE_CHARSET,"total":PHONE_TOTAL}
         try:
             minimum=int(self.min_len.get());maximum=int(self.max_len.get())
         except (ValueError,tk.TclError):
@@ -520,6 +529,8 @@ class RecoveryPanel(ttk.Frame):
                             if path.suffix.lower()==".gz" and expanded>MAX_EXPANDED_WORDLIST:raise RuntimeError("Compressed wordlist exceeds the 2 GiB expansion limit.")
                             count+=block.count(b"\n")
                     total=count
+                elif options["mode"]=="phone":
+                    total=options["total"]
                 else:
                     total=sum(options["size"]**n for n in range(options["minimum"],options["maximum"]+1))
                 self.events.put(("estimate",speed,total))
@@ -621,6 +632,9 @@ class RecoveryPanel(ttk.Frame):
                             if self.cancel_requested:raise RuntimeError("Preparation cancelled.")
                             count+=block.count(b"\n")
                     self.events.put(("keyspace",count))
+                elif options["mode"]=="phone":
+                    self.events.put(("keyspace",options["total"]))
+                    args += ["-a","3","-2",options["charset"],hashfile,options["mask"]]
                 else:
                     mask="?1"*options["maximum"]
                     total=sum(options["size"]**n for n in range(options["minimum"],options["maximum"]+1))
@@ -831,10 +845,13 @@ class RecoveryPanel(ttk.Frame):
             # settings when they exactly match the running mask's shape.
             try:options=self._attack_options()
             except ValueError:return
-        if not (options.get('mode')=='mask' and isinstance(mask,str)
-                and re.fullmatch(r'(?:\?1)+',mask) and isinstance(point,int)
-                and 0<=point<10**16):
+        if not (isinstance(mask,str) and isinstance(point,int) and 0<=point<10**16):
             return
+        if options.get('mode')=='phone' and mask==PHONE_MASK:
+            charset_flag='-2'
+        elif options.get('mode')=='mask' and re.fullmatch(r'(?:\?1)+',mask):
+            charset_flag='-1'
+        else:return
         charset=options.get('charset')
         if not charset or not HASHCAT:return
         self.sample_inflight=True
@@ -843,11 +860,11 @@ class RecoveryPanel(ttk.Frame):
             candidate=None
             process=None
             try:
-                cache_key=(charset,mask)
+                cache_key=(charset_flag,charset,mask)
                 keyspaces=self.sample_keyspaces.get(cache_key)
                 if not keyspaces:
                     def base_size(hash_mode):
-                        args=[HASHCAT,'--keyspace','-a','3','-1',charset,mask]
+                        args=[HASHCAT,'--keyspace','-a','3',charset_flag,charset,mask]
                         if hash_mode:args[2:2]=['-m',hash_mode]
                         result=subprocess.run(args,capture_output=True,text=True,timeout=4)
                         if result.returncode:raise ValueError('Could not read mask keyspace')
@@ -858,7 +875,7 @@ class RecoveryPanel(ttk.Frame):
                 if not target_base or not stdout_base:raise ValueError('Empty mask keyspace')
                 sample_point=min(stdout_base-1,point*stdout_base//target_base)
                 process=subprocess.Popen([HASHCAT,'--stdout','-a','3','--skip',str(sample_point),
-                                          '--limit','1','-1',charset,mask],
+                                          '--limit','1',charset_flag,charset,mask],
                                          stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
                                          start_new_session=True)
                 if select.select([process.stdout],[],[],4)[0]:

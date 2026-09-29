@@ -96,6 +96,9 @@ class RecoveryPanel(ttk.Frame):
         self.estimate_var = tk.StringVar(value="Pre-run estimate: click Estimate after analyzing a capture.")
         self.state_var = tk.StringVar(value="Idle")
         self.progress_var = tk.StringVar(value="0%")
+        self.current_guess_var = tk.StringVar(value="Waiting for Hashcat…")
+        self.tried_var = tk.StringVar(value="0")
+        self.total_var = tk.StringVar(value="—")
         self.speed_var = tk.StringVar(value="Speed: —")
         self.eta_var = tk.StringVar(value="ETA: —")
         self.elapsed_var = tk.StringVar(value="Elapsed: —")
@@ -216,6 +219,12 @@ class RecoveryPanel(ttk.Frame):
         metrics = ttk.Frame(run, style="Card.TFrame"); metrics.pack(fill="x", pady=(7,0))
         for var in (self.speed_var,self.eta_var,self.elapsed_var):
             ttk.Label(metrics,textvariable=var,style="Card.TLabel").pack(side="left",padx=(0,24))
+        live = ttk.Frame(run, style="Card.TFrame"); live.pack(fill="x", pady=(9,0))
+        ttk.Label(live,text="Guess range",style="Card.TLabel").pack(side="left",padx=(0,7))
+        ttk.Entry(live,textvariable=self.current_guess_var,state="readonly",width=31).pack(side="left",padx=(0,18))
+        for title,var in (("Tried",self.tried_var),("Total",self.total_var)):
+            ttk.Label(live,text=title+":",style="Card.TLabel").pack(side="left",padx=(0,4))
+            ttk.Label(live,textvariable=var,style="CardHead.TLabel").pack(side="left",padx=(0,18))
         resultrow = ttk.Frame(run, style="Card.TFrame"); resultrow.pack(fill="x", pady=(10,3))
         ttk.Label(resultrow, textvariable=self.result_var, style="Card.TLabel").pack(side="left")
         self.reveal_btn=ttk.Button(resultrow,text="Reveal",command=self.toggle_reveal,state="disabled")
@@ -546,6 +555,9 @@ class RecoveryPanel(ttk.Frame):
         self.stop_btn.configure(state="normal")
         self.progress.configure(value=0)
         self.progress_var.set("0%")
+        self.current_guess_var.set("Waiting for Hashcat…")
+        self.tried_var.set("0")
+        self.total_var.set("—")
         self.speed_var.set("Speed: —")
         self.eta_var.set("ETA: waiting for speed")
         self.state_var.set("Preparing the search…")
@@ -753,6 +765,9 @@ class RecoveryPanel(ttk.Frame):
         self.reveal_btn.configure(state='disabled',text='Reveal')
         self.progress.configure(value=0)
         self.progress_var.set('0%')
+        self.current_guess_var.set('Waiting for Hashcat…')
+        self.tried_var.set('—')
+        self.total_var.set('—')
         self.state_var.set('Resuming saved search…')
         self.start_btn.configure(state='disabled')
         self.resume_btn.configure(state='disabled')
@@ -854,9 +869,22 @@ class RecoveryPanel(ttk.Frame):
                     self.pause_btn.configure(state='disabled')
                 elif kind=="keyspace":
                     self.keyspace_var.set("Search contains approximately "+compact_number(event[1])+" candidates. ETA will use live speed.")
+                    self.total_var.set(f"{int(event[1]):,}")
                 elif kind=="status":
                     data=event[1]
                     done,total=data.get("progress",[0,0])[:2]
+                    self.tried_var.set(f"{int(done):,}")
+                    self.total_var.set(f"{int(total):,}" if total else "—")
+                    candidates=next((device.get('candidates') or device.get('guess_candidates')
+                                     for device in data.get('devices',[])
+                                     if device.get('candidates') or device.get('guess_candidates')),None)
+                    if candidates:
+                        if isinstance(candidates,(list,tuple)):
+                            candidates=' → '.join(str(item) for item in candidates)
+                        self.current_guess_var.set(str(candidates))
+                    else:
+                        pattern=(data.get('guess') or {}).get('guess_base')
+                        self.current_guess_var.set('Pattern: '+str(pattern) if pattern else 'Live guess unavailable')
                     percent=100*done/total if total else 0
                     self.progress.configure(value=min(100,percent))
                     self.progress_var.set(f"{percent:.1f}%")

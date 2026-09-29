@@ -85,33 +85,41 @@ class AirWatch(tk.Tk):
         # Treeview defaults use fixed pixels, which clip scaled desktop fonts.
         table_font = tkfont.nametofont("TkDefaultFont")
         row_padding = round(float(self.tk.call("tk", "scaling")) * 8)
-        s.configure("Treeview", font=table_font,
+        s.configure("Treeview", font=table_font,background="#ffffff",fieldbackground="#ffffff",
                     rowheight=table_font.metrics("linespace") + row_padding)
-        s.configure("Treeview.Heading", padding=(8, 6))
+        s.map("Treeview",background=[("selected","#d9c7ff")],foreground=[("selected","#32205e")])
+        s.configure("Treeview.Heading", padding=(8, 8),background="#ede5ff",foreground="#4e3487",font=("TkDefaultFont",10,"bold"))
         self.option_add("*Dialog.msg.wrapLength", "650")
-        s.configure("TFrame", background="#f4f3ff")
+        s.configure("TFrame", background="#fff8ef")
         s.configure("Card.TFrame", background="white")
-        s.configure("TLabel", background="#f4f6f8", foreground="#182230", font=("TkDefaultFont", 10))
-        s.configure("Title.TLabel", font=("TkDefaultFont", 20, "bold"), foreground="#25305a")
-        s.configure("Sub.TLabel", foreground="#667085")
-        s.configure("Card.TLabel", background="white")
-        s.configure("CardHead.TLabel", background="white", font=("TkDefaultFont", 11, "bold"))
-        s.configure("Accent.TButton", font=("TkDefaultFont", 10, "bold"))
+        s.configure("TLabel", background="#fff8ef", foreground="#382c45", font=("TkDefaultFont", 10))
+        s.configure("Title.TLabel", font=("TkDefaultFont", 20, "bold"), foreground="#5531a5")
+        s.configure("Sub.TLabel", foreground="#685c76")
+        s.configure("Card.TLabel", background="white",foreground="#382c45")
+        s.configure("CardHead.TLabel", background="white",foreground="#5531a5",font=("TkDefaultFont", 11, "bold"))
+        s.configure("Accent.TButton", font=("TkDefaultFont", 10, "bold"),background="#ff715b",foreground="white",padding=(12,8))
+        s.map("Accent.TButton",background=[("active","#e95342"),("disabled","#d8d0df")])
         s.configure("Step.TLabel",background="#eef2f6",foreground="#667085",padding=(9,7),font=("TkDefaultFont",9,"bold"))
         s.configure("StepActive.TLabel",background="#e8f1ff",foreground="#175cd3",padding=(9,7),font=("TkDefaultFont",9,"bold"))
         s.configure("StepDone.TLabel",background="#eaf7ef",foreground="#067647",padding=(9,7),font=("TkDefaultFont",9,"bold"))
-        s.configure("Nav.TButton",padding=(12,8),font=("TkDefaultFont",10))
-        s.configure("NavActive.TButton",padding=(12,8),font=("TkDefaultFont",10,"bold"),foreground="#5648cf",background="#e8e4ff")
+        s.configure("Nav.TButton",padding=(14,10),font=("TkDefaultFont",11,"bold"),foreground="#5531a5",background="#f0e8ff",borderwidth=0)
+        s.map("Nav.TButton",background=[("active","#dfd0ff")])
+        s.configure("NavActive.TButton",padding=(14,10),font=("TkDefaultFont",11,"bold"),foreground="white",background="#6745c1",borderwidth=0)
+        s.map("NavActive.TButton",background=[("active","#5431ad")])
+        s.configure("WiFi.TButton",padding=(12,10),font=("TkDefaultFont",10,"bold"),foreground="#116149",background="#c9f4d8",borderwidth=0)
+        s.map("WiFi.TButton",background=[("active","#a7ecc2")])
+        s.configure("TNotebook.Tab",padding=(11,7),background="#ede5ff",foreground="#5531a5")
+        s.map("TNotebook.Tab",background=[("selected","#6745c1")],foreground=[("selected","white")])
 
     def _build_navigation(self):
         bar=ttk.Frame(self,style="Card.TFrame",padding=(14,8))
         bar.pack(side="top",fill="x")
         self.nav_buttons={}
-        for name,icon in (("Networks","⌁"),("Capture","◉"),("Evidence","◫"),("Recovery","◇"),("Adapters","▣"),("Activity","≡")):
+        for name,icon in (("Networks","📡"),("Capture","🎯"),("Evidence","🧾"),("Recovery","🔓"),("Adapters","📶"),("Activity","📝")):
             button=ttk.Button(bar,text=f"{icon}  {name}",style="Nav.TButton",command=lambda n=name:self.navigate(n))
             button.pack(side="left",padx=(0,5))
             self.nav_buttons[name]=button
-        ttk.Button(bar,text="↻ Restore Wi-Fi",command=self.restore_wifi).pack(side="right")
+        ttk.Button(bar,text="↻ Restore Wi-Fi",command=self.restore_wifi,style="WiFi.TButton").pack(side="right")
         self._active_tab="Networks"
         self.nav_buttons["Networks"].configure(style="NavActive.TButton")
 

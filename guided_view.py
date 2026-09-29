@@ -153,7 +153,7 @@ class GuidedView(ttk.Frame):
         for var in (self.recovery.progress_var,self.recovery.speed_var,self.recovery.eta_var):
             ttk.Label(stats,textvariable=var,style='Card.TLabel').pack(side='left',padx=(0,24))
         live=ttk.Frame(self.recover,style='Card.TFrame');live.pack(fill='x',pady=(11,0))
-        ttk.Label(live,text='Guess range',style='Card.TLabel').pack(side='left',padx=(0,7))
+        ttk.Label(live,text='Guess sample',style='Card.TLabel').pack(side='left',padx=(0,7))
         ttk.Entry(live,textvariable=self.recovery.current_guess_var,state='readonly',width=29).pack(side='left',padx=(0,18))
         for title,var in (('Tried',self.recovery.tried_var),('Total',self.recovery.total_var)):
             ttk.Label(live,text=title+':',style='Card.TLabel').pack(side='left',padx=(0,5))

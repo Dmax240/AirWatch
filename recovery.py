@@ -4,6 +4,7 @@ import json
 import os
 import queue
 import re
+import select
 import shutil
 import signal
 import subprocess
@@ -73,6 +74,9 @@ class RecoveryPanel(ttk.Frame):
         self.pending_capture = None
         self.ready_target_bssid = None
         self.active_target = None
+        self.active_options = None
+        self.sample_inflight = False
+        self.last_sample_at = 0
         self.devices=[]
         self.device_var=tk.StringVar(value="Detecting GPUs…")
         self.gpu_status=tk.StringVar(value="Looking for Hashcat devices…")
@@ -220,7 +224,7 @@ class RecoveryPanel(ttk.Frame):
         for var in (self.speed_var,self.eta_var,self.elapsed_var):
             ttk.Label(metrics,textvariable=var,style="Card.TLabel").pack(side="left",padx=(0,24))
         live = ttk.Frame(run, style="Card.TFrame"); live.pack(fill="x", pady=(9,0))
-        ttk.Label(live,text="Guess range",style="Card.TLabel").pack(side="left",padx=(0,7))
+        ttk.Label(live,text="Guess sample",style="Card.TLabel").pack(side="left",padx=(0,7))
         ttk.Entry(live,textvariable=self.current_guess_var,state="readonly",width=31).pack(side="left",padx=(0,18))
         for title,var in (("Tried",self.tried_var),("Total",self.total_var)):
             ttk.Label(live,text=title+":",style="Card.TLabel").pack(side="left",padx=(0,4))
@@ -540,6 +544,7 @@ class RecoveryPanel(ttk.Frame):
         except ValueError as exc:
             messagebox.showerror("AirWatch",str(exc));return
         self.job_running=True
+        self.active_options=options
         self.active_target=dict(self.app.selected_target or {})
         self.app.emergency_active=False
         self.cancel_requested=False
@@ -580,7 +585,8 @@ class RecoveryPanel(ttk.Frame):
         metadata={'version':1,'session':session_name,'restore_file':str(restore_file),
                   'hashfile':str(hashfile),'result_path':str(self.result_path),
                   'run_dir':str(run_dir),'capture_path':self.capture_path.get(),
-                  'target':dict(self.app.selected_target or {}),'pid':0,'status':'preparing'}
+                  'target':dict(self.app.selected_target or {}),'attack_options':options,
+                  'pid':0,'status':'preparing'}
         def worker():
             try:
                 args=[HASHCAT,*performance,"-m","22000","--status","--status-json","--status-timer","2", "--session",session_name,
@@ -701,6 +707,7 @@ class RecoveryPanel(ttk.Frame):
         if not restore.is_file() or restore.stat().st_size==0:return
         self.saved_session=metadata
         self.active_target=dict(metadata.get('target') or {})
+        self.active_options=metadata.get('attack_options')
         self.session_manifest=metadata['manifest_path']
         self.ready_hash=metadata.get('hashfile')
         self.ready_target_bssid=re.sub(r'[^0-9a-fA-F]','',(metadata.get('target') or {}).get('bssid','')).lower() or None
@@ -751,6 +758,7 @@ class RecoveryPanel(ttk.Frame):
             return
         self.saved_session=metadata
         self.active_target=dict(metadata.get('target') or {})
+        self.active_options=metadata.get('attack_options')
         self.session_manifest=metadata['manifest_path']
         self.ready_hash=str(hashfile)
         self.run_dir=metadata.get('run_dir')
@@ -808,6 +816,49 @@ class RecoveryPanel(ttk.Frame):
         else:
             self.result_var.set("Passphrase recovered. Click Reveal to view it.")
             self.reveal_btn.configure(text="Reveal")
+
+    def _sample_mask_guess(self, status):
+        """Show one real candidate near the saved base position, without GPU work."""
+        if self.sample_inflight or time.monotonic()-self.last_sample_at<6:
+            return
+        guess=status.get('guess') or {}
+        mask=guess.get('guess_base')
+        point=status.get('restore_point')
+        options=self.active_options
+        if not options:
+            # Legacy checkpoints did not record the mask. Only use visible
+            # settings when they exactly match the running mask's shape.
+            try:options=self._attack_options()
+            except ValueError:return
+        if not (options.get('mode')=='mask' and isinstance(mask,str)
+                and re.fullmatch(r'(?:\?1)+',mask) and isinstance(point,int)
+                and 0<=point<10**16):
+            return
+        charset=options.get('charset')
+        if not charset or not HASHCAT:return
+        self.sample_inflight=True
+        self.last_sample_at=time.monotonic()
+        def worker():
+            candidate=None
+            process=None
+            try:
+                process=subprocess.Popen([HASHCAT,'--stdout','-a','3','--skip',str(point),
+                                          '--limit','1','-1',charset,mask],
+                                         stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
+                                         start_new_session=True)
+                if select.select([process.stdout],[],[],4)[0]:
+                    raw=process.stdout.readline(256)
+                    if raw:candidate=raw.decode('utf-8','replace').strip()
+            except (OSError,ValueError):
+                pass
+            finally:
+                if process:
+                    try:process.terminate();process.wait(timeout=1)
+                    except (OSError,subprocess.TimeoutExpired):
+                        try:process.kill();process.wait(timeout=1)
+                        except (OSError,subprocess.TimeoutExpired):pass
+                self.events.put(('sample',candidate))
+        threading.Thread(target=worker,daemon=True).start()
 
     def _pump(self):
         try:
@@ -873,6 +924,16 @@ class RecoveryPanel(ttk.Frame):
                 elif kind=="status":
                     data=event[1]
                     done,total=data.get("progress",[0,0])[:2]
+                    percent=100*done/total if total else 0
+                    self.progress.configure(value=min(100,percent))
+                    self.progress_var.set(f"{percent:.1f}%")
+                    speed=sum(max(0,int(device.get("speed",0))) for device in data.get("devices",[]))
+                    self.speed_var.set("Speed: "+compact_number(speed)+" guesses/s")
+                    eta=int(data.get("estimated_stop",0))
+                    remaining=max(0,eta-time.time()) if eta>time.time() else ((total-done)/speed if speed else None)
+                    self.eta_var.set("ETA: "+duration(remaining))
+                    states={3:"Running",4:"Paused",5:"Exhausted",6:"Recovered",7:"Aborted",8:"Stopped",10:"Saving checkpoint"}
+                    self.state_var.set('Saving at the next checkpoint…' if self.pause_requested else states.get(data.get("status"),"Running"))
                     self.tried_var.set(f"{int(done):,}")
                     self.total_var.set(f"{int(total):,}" if total else "—")
                     candidates=next((device.get('candidates') or device.get('guess_candidates')
@@ -884,17 +945,14 @@ class RecoveryPanel(ttk.Frame):
                         self.current_guess_var.set(str(candidates))
                     else:
                         pattern=(data.get('guess') or {}).get('guess_base')
-                        self.current_guess_var.set('Pattern: '+str(pattern) if pattern else 'Live guess unavailable')
-                    percent=100*done/total if total else 0
-                    self.progress.configure(value=min(100,percent))
-                    self.progress_var.set(f"{percent:.1f}%")
-                    speed=sum(max(0,int(device.get("speed",0))) for device in data.get("devices",[]))
-                    self.speed_var.set("Speed: "+compact_number(speed)+" guesses/s")
-                    eta=int(data.get("estimated_stop",0))
-                    remaining=max(0,eta-time.time()) if eta>time.time() else ((total-done)/speed if speed else None)
-                    self.eta_var.set("ETA: "+duration(remaining))
-                    states={3:"Running",4:"Paused",5:"Exhausted",6:"Recovered",7:"Aborted",8:"Stopped",10:"Saving checkpoint"}
-                    self.state_var.set('Saving at the next checkpoint…' if self.pause_requested else states.get(data.get("status"),"Running"))
+                        if not self.current_guess_var.get().startswith('Near now:'):
+                            self.current_guess_var.set('Pattern: '+str(pattern) if pattern else 'Live guess unavailable')
+                        if data.get('status')==3 and not self.pause_requested:
+                            self._sample_mask_guess(data)
+                elif kind=='sample':
+                    self.sample_inflight=False
+                    if event[1] and self.job_running:
+                        self.current_guess_var.set('Near now: '+event[1])
                 elif kind=="log":
                     self._log(event[1])
                 elif kind=="done":

@@ -222,7 +222,7 @@ class RecoveryPanel(ttk.Frame):
         self.start_btn = ttk.Button(topbar, text="Start Hashcat", command=self.start_attack)
         self.start_btn.pack(side="right")
         ttk.Button(topbar,text="Open results folder",command=self.open_results).pack(side="right",padx=(0,7))
-        self.resume_btn = ttk.Button(topbar, text="▶ Resume saved", command=self.resume_saved, state="disabled")
+        self.resume_btn = ttk.Button(topbar, text="▶ Continue old search", command=self.resume_saved, state="disabled")
         self.resume_btn.pack(side="right", padx=(0,7))
         ttk.Button(topbar,text='Open saved…',command=self.open_saved_session).pack(side='right',padx=(0,7))
         self.pause_btn = ttk.Button(topbar, text="Ⅱ Pause & save", command=self.pause_save, state="disabled")
@@ -568,7 +568,7 @@ class RecoveryPanel(ttk.Frame):
             return
         if self.saved_session and Path(self.saved_session['restore_file']).is_file():
             if not messagebox.askyesno('Saved search exists',
-                    'A saved search is ready to resume. Start a new search instead? The old checkpoint stays in its results folder.'):
+                    'Start a new search with the pattern selected now? The old search uses its original pattern and its checkpoint stays in its results folder.'):
                 return
         try:
             options=self._attack_options()
@@ -763,7 +763,7 @@ class RecoveryPanel(ttk.Frame):
             self.state_var.set('This search is still running in another AirWatch window.')
             self.resume_btn.configure(state='disabled')
         else:
-            self.state_var.set('Saved search ready. Resume when you want.')
+            self.state_var.set('Old search saved. Continue it or start a new pattern.')
             self.analysis_var.set('Saved checkpoint found for '+str(target.get('essid','this network') if isinstance(target,dict) else 'this network')+'.')
             self.resume_btn.configure(state='normal')
         self.app.navigate('Recovery')
@@ -968,7 +968,9 @@ class RecoveryPanel(ttk.Frame):
                 elif kind=="estimate":
                     self.job_running=False;self.start_btn.state(["!disabled"]);self.stop_btn.state(["disabled"]);self.state_var.set("Estimate ready")
                     speed,total=event[1],event[2]
-                    self.estimate_var.set(f"Approx. {duration(total/speed)} at {compact_number(speed)} guesses/s. Actual throughput varies.")
+                    limit=int(self.runtime.get())
+                    limit_note=f" Stops after {limit} second{'s' if limit!=1 else ''}." if limit else ""
+                    self.estimate_var.set(f"Approx. {duration(total/speed)} at {compact_number(speed)} guesses/s.{limit_note}")
                     self.estimate_btn.configure(state="normal")
                 elif kind=="estimate_error":
                     self.estimate_proc=None;self.job_running=False;self.start_btn.state(["!disabled"]);self.stop_btn.state(["disabled"]);self.state_var.set("Estimate stopped")

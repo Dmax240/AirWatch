@@ -35,6 +35,7 @@ class GuidedView(ttk.Frame):
         self.detail_var=tk.StringVar()
         self.context_var=tk.StringVar()
         self.action_var=tk.StringVar()
+        self.new_search_label=tk.StringVar(value='▶ Start selected search')
         self.gpu_var=tk.StringVar()
         settings=load_preferences()
         for key,value in settings.items():
@@ -152,6 +153,13 @@ class GuidedView(ttk.Frame):
         estimate=ttk.Frame(self.recover,style='Card.TFrame');estimate.pack(fill='x',pady=(0,10))
         self.estimate_btn=ttk.Button(estimate,text='Estimate time',command=self.recovery.estimate_time);self.estimate_btn.pack(side='left')
         ttk.Label(estimate,textvariable=self.recovery.estimate_var,style='Card.TLabel',wraplength=850).pack(side='left',padx=12)
+        start_row=ttk.Frame(self.recover,style='Card.TFrame');start_row.pack(fill='x',pady=(2,12))
+        self.new_search_btn=ttk.Button(start_row,textvariable=self.new_search_label,command=self.start_selected_search,
+                                       style='Guide.Primary.TButton')
+        self.new_search_btn.pack(side='left',padx=(0,18))
+        ttk.Label(start_row,text='Stop after',style='Card.TLabel').pack(side='left',padx=(0,7))
+        ttk.Spinbox(start_row,from_=0,to=86400,width=6,textvariable=self.recovery.runtime).pack(side='left')
+        ttk.Label(start_row,text='seconds · 0 keeps going',style='Card.TLabel').pack(side='left',padx=(7,0))
         ttk.Separator(self.recover).pack(fill='x',pady=8)
         ttk.Label(self.recover,textvariable=self.recovery.state_var,style='CardHead.TLabel').pack(anchor='w',pady=(8,6))
         self.progress=ttk.Progressbar(self.recover,maximum=100,style='Guide.Progress.Horizontal.TProgressbar');self.progress.pack(fill='x',pady=(0,8))
@@ -238,6 +246,7 @@ class GuidedView(ttk.Frame):
             r.method.set('mask');self.custom_row.pack(fill='x',pady=4,before=self.gpu_row)
             self.pattern_help.configure(text='Choose the characters and length you know.')
         r.update_estimate()
+        self.update_start_label()
 
     def choose_state(self,_event=None):
         state=self.recovery.phone_state.get()
@@ -245,6 +254,17 @@ class GuidedView(ttk.Frame):
         except ValueError:codes=[]
         self.pattern_help.configure(text=f'{state}: {len(codes)} area codes, then 7 digits. No dashes.')
         self.recovery.update_estimate()
+        self.update_start_label()
+
+    def update_start_label(self):
+        if self.pattern.get()=='State phone numbers':
+            self.new_search_label.set('▶ Start '+self.recovery.phone_state.get()+' search')
+        else:
+            self.new_search_label.set('▶ Start selected search')
+
+    def start_selected_search(self):
+        self.notice=''
+        self.recovery.start_attack()
 
     def choose_gpu(self,_event=None):
         match=next((d for d in self.recovery.devices if d.name==self.gpu_var.get()),None)
@@ -416,7 +436,7 @@ class GuidedView(ttk.Frame):
             if r.job_running:
                 title='Trying passwords…';detail='Pause & save lets you close AirWatch and resume later.';action='Ⅱ Pause & save'
             elif r.saved_session:
-                title='Your search is saved';detail='Pick up from the saved checkpoint.';action='▶ Resume saved'
+                title='Your old search is saved';detail='Continue its original pattern, or start the selected pattern below.';action='▶ Continue old search'
             elif r.recovered_plain:
                 title='Password found!';detail='Tap Reveal password below.';action='Try another search'
             else:
@@ -465,6 +485,8 @@ class GuidedView(ttk.Frame):
         self.reconnect_toggle.state(['disabled'] if not app.client_suitability.can_capture() else ['!disabled'])
         self.scan_stop.state(['!disabled'] if app.proc and not app.capture_focused and not locked else ['disabled'])
         self.scan_start.state(['!disabled'] if not app.proc and not locked else ['disabled'])
+        can_start=not r.job_running and r.ready_for_current_target() and Path(r.ready_hash).is_file() if r.ready_hash else False
+        self.new_search_btn.state(['!disabled'] if can_start else ['disabled'])
         if r.pending_capture:
             if not self.new_capture_btn.winfo_manager():self.new_capture_btn.pack(anchor='w',pady=(10,0))
             self.new_capture_btn.configure(text='Check new capture' if not r.job_running else 'New capture saved · check after search')

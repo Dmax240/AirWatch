@@ -14,6 +14,8 @@ Run `./start-airwatch.sh` from this folder. The app asks PolicyKit for administr
 2. **Capture:** Start focused capture. A usable record for the selected access point ends capture, restores the adapter, and opens analysis. A broad scan alone does not confirm a handshake.
 3. **Recovery:** Choose a wordlist or a pattern and GPU. The offline search stops after the first recovered passphrase. If it exhausts the chosen search space, it has not found a match there.
 
+You can open **Networks → Find networks** while Recovery runs. A scan and focused capture can use another adapter without pausing Hashcat. A new capture is saved separately; **Check new capture** becomes available after the current search stops. If only your connected adapter can scan, AirWatch asks before switching it to monitor mode.
+
 **Pause & save** asks Hashcat to quit at its next checkpoint. You can then close AirWatch; the **Resume saved** button appears when you reopen it. Closing the app during a search asks for the same checkpoint and waits for the search to stop. Saved sessions live in private results folders, and the latest session is remembered in `~/.config/airwatch/saved-search.json`. Keep the hash, wordlist, and results folder at their original paths. Hashcat may repeat work done since its last restore point. [Hashcat's restore guide](https://hashcat.net/wiki/doku.php?id=restore) explains this behavior.
 
 **Restore Wi-Fi** stays at the top of the app. It stops capture, returns the tracked adapter to managed mode, restarts NetworkManager, enables Wi-Fi, and waits briefly for a saved connection. If the driver or access point is unavailable, you may still need to reconnect through Linux's Wi-Fi menu.

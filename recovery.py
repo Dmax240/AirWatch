@@ -70,6 +70,9 @@ class RecoveryPanel(ttk.Frame):
         self.pause_requested = False
         self.saved_session = None
         self.session_manifest = None
+        self.pending_capture = None
+        self.ready_target_bssid = None
+        self.active_target = None
         self.devices=[]
         self.device_var=tk.StringVar(value="Detecting GPUs…")
         self.gpu_status=tk.StringVar(value="Looking for Hashcat devices…")
@@ -303,10 +306,42 @@ class RecoveryPanel(ttk.Frame):
         self.analysis_var.set("Click Analyze selected capture.")
 
     def on_capture_finished(self):
+        if self.job_running:
+            self.defer_capture(self.app.capture_prefix,self.app.selected_target)
+            return
         self.use_last_capture()
         self.app.main_tabs.select(self)
         if self.capture_path.get():
             self.analyze()
+
+    def defer_capture(self,prefix,target):
+        """Keep a new capture separate from the currently running search."""
+        if not prefix or not target:return
+        path=Path(prefix+'-01.cap')
+        if path.is_file():
+            self.pending_capture=(str(path),dict(target))
+            self.analysis_var.set('New capture saved. Check it after the current search stops.')
+            self.app._log('New capture saved for later analysis; the current password search continues.')
+
+    def analyze_pending_capture(self):
+        if self.job_running or not self.pending_capture:return
+        path,target=self.pending_capture
+        if not Path(path).is_file():
+            self.analysis_var.set('The new capture file is missing.')
+            return
+        self.pending_capture=None
+        self.app.selected_target=dict(target)
+        self.active_target=dict(target)
+        self.app.client_suitability.select(self.app.selected_target)
+        self.capture_path.set(path)
+        self.target_var.set(f"Selected: {target['essid']}  ·  {target['bssid']}")
+        self.ready_hash=None
+        self.ready_target_bssid=None
+        self.analyze()
+
+    def ready_for_current_target(self):
+        current=re.sub(r'[^0-9a-fA-F]','',(self.app.selected_target or {}).get('bssid','')).lower()
+        return bool(self.ready_hash and (not self.ready_target_bssid or current==self.ready_target_bssid))
 
     def use_rockyou(self):
         if ROCKYOU:
@@ -483,6 +518,9 @@ class RecoveryPanel(ttk.Frame):
             messagebox.showerror("AirWatch","Hashcat is not installed. Install it with your package manager.");return
         if not self.ready_hash or self.hashcat_proc or self.job_running:
             messagebox.showinfo("AirWatch","Analyze a capture first, or wait for the current run to finish.");return
+        if not self.ready_for_current_target():
+            messagebox.showinfo('AirWatch','Check the selected network’s capture before starting its password search.')
+            return
         if self.saved_session and Path(self.saved_session['restore_file']).is_file():
             if not messagebox.askyesno('Saved search exists',
                     'A saved search is ready to resume. Start a new search instead? The old checkpoint stays in its results folder.'):
@@ -493,6 +531,7 @@ class RecoveryPanel(ttk.Frame):
         except ValueError as exc:
             messagebox.showerror("AirWatch",str(exc));return
         self.job_running=True
+        self.active_target=dict(self.app.selected_target or {})
         self.app.emergency_active=False
         self.cancel_requested=False
         self.pause_requested=False
@@ -649,8 +688,10 @@ class RecoveryPanel(ttk.Frame):
         restore=Path(metadata['restore_file'])
         if not restore.is_file() or restore.stat().st_size==0:return
         self.saved_session=metadata
+        self.active_target=dict(metadata.get('target') or {})
         self.session_manifest=metadata['manifest_path']
         self.ready_hash=metadata.get('hashfile')
+        self.ready_target_bssid=re.sub(r'[^0-9a-fA-F]','',(metadata.get('target') or {}).get('bssid','')).lower() or None
         self.run_dir=metadata.get('run_dir')
         self.result_path=Path(metadata.get('result_path',''))
         self.capture_path.set(metadata.get('capture_path',''))
@@ -697,6 +738,7 @@ class RecoveryPanel(ttk.Frame):
             self.state_var.set('The saved wordlist is missing. Restore it to its original path to resume.')
             return
         self.saved_session=metadata
+        self.active_target=dict(metadata.get('target') or {})
         self.session_manifest=metadata['manifest_path']
         self.ready_hash=str(hashfile)
         self.run_dir=metadata.get('run_dir')
@@ -778,6 +820,8 @@ class RecoveryPanel(ttk.Frame):
                         self.analysis_var.set("Selection changed during analysis. Analyze the current target and capture again.")
                         continue
                     self.ready_hash=event[1];self.run_dir=event[2]
+                    self.ready_target_bssid=event[5]
+                    self.active_target=dict(self.app.selected_target or {})
                     self.analysis_var.set(f"Ready: {event[3]} EAPOL record(s), {event[4]} PMKID record(s) for selected AP.")
                     self.analyze_btn.configure(state="normal")
                     self._log("Selected target hash saved: "+event[1])

@@ -198,7 +198,7 @@ class AirWatch(tk.Tk):
         card2 = ttk.Frame(row, style="Card.TFrame", padding=15); card2.pack(side="left", fill="both", padx=(12,0))
         ttk.Label(card2, text="CAPTURE", style="CardHead.TLabel").pack(anchor="w")
         self.state = ttk.Label(card2, text="●  Idle", style="Card.TLabel", foreground="#667085"); self.state.pack(anchor="w", pady=(10,6))
-        self.start_btn = ttk.Button(card2, text="Start passive scan", style="Accent.TButton", command=self.start_capture); self.start_btn.pack(fill="x")
+        self.start_btn = ttk.Button(card2, text="⌕ Find networks", style="Accent.TButton", command=lambda:self.guided.start_network_scan()); self.start_btn.pack(fill="x")
         self.stop_btn = ttk.Button(card2, text="Stop capture", command=self.stop_capture, state="disabled"); self.stop_btn.pack(fill="x", pady=(7,0))
 
         cap = ttk.Frame(setup_tab, style="Card.TFrame", padding=15); cap.pack(fill="x", pady=14)
@@ -240,7 +240,7 @@ class AirWatch(tk.Tk):
         self.scan_state=ttk.Label(scanbar,text="Choose an adapter in Setup",style="Card.TLabel")
         self.scan_state.pack(side="left",fill="x",expand=True)
         ttk.Combobox(scanbar,textvariable=self.scan_band,values=("2.4 + 5 GHz","2.4 GHz","5 GHz"),state="readonly",width=16).pack(side="right",padx=10)
-        self.scan_start_btn=ttk.Button(scanbar,text="Start passive scan",command=self.start_capture)
+        self.scan_start_btn=ttk.Button(scanbar,text="⌕ Find networks",command=lambda:self.guided.start_network_scan())
         self.scan_start_btn.pack(side="right")
         self.scan_stop_btn=ttk.Button(scanbar,text="Stop capture",command=self.stop_capture,state="disabled")
         self.scan_stop_btn.pack(side="right",padx=(0,8))
@@ -284,7 +284,7 @@ class AirWatch(tk.Tk):
             name=self.interface.get()
             mode=self.interfaces.get(name,{}).get("mode")
             if self.capture_focused and self.proc: stage=3
-            elif hasattr(self,"recovery_panel") and self.recovery_panel.ready_hash and not self.proc: stage=5
+            elif hasattr(self,"recovery_panel") and self.recovery_panel.ready_for_current_target() and not self.proc: stage=5
             elif self.capture_focused and not self.proc and self.capture_prefix: stage=4
             elif self.selected_target: stage=3
             elif self.proc or mode=="monitor": stage=2
@@ -307,7 +307,7 @@ class AirWatch(tk.Tk):
                 text,state="Stop & check WPA2 capture","normal"
             else:
                 text,state=("Next: focused capture","normal") if self.client_suitability.can_capture() else ("Choose a WPA2 network","disabled")
-        elif hasattr(self,"recovery_panel") and self.recovery_panel.ready_hash:
+        elif hasattr(self,"recovery_panel") and self.recovery_panel.ready_for_current_target():
             text,state="Next: recovery","normal"
         elif self.capture_focused and self.capture_prefix:
             text,state="Next: analyze capture","normal"
@@ -726,12 +726,14 @@ class AirWatch(tk.Tk):
         chosen=self.adapter_table.selection()
         if not chosen:return
         new_interface=chosen[0]
-        if new_interface!=self.interface.get() and (self.proc or self.recovery_panel.job_running):
+        if new_interface!=self.interface.get() and self.proc:
             if self.interface.get() in self.adapter_table.get_children():self.adapter_table.selection_set(self.interface.get())
             return
         if new_interface!=self.interface.get():
             self.selected_target=None
-            if not self.recovery_panel.job_running:self.recovery_panel.ready_hash=None
+            if not self.recovery_panel.job_running:
+                self.recovery_panel.ready_hash=None
+                self.recovery_panel.ready_target_bssid=None
             self.next_btn.configure(state="disabled",text="Next: capture selected AP")
             self.table.delete(*self.table.get_children())
         self.interface.set(new_interface)
@@ -753,15 +755,15 @@ class AirWatch(tk.Tk):
             self.iface_info.configure(text=f"Selected {name}: MANAGED mode. Enable monitor mode before scanning; Wi-Fi on this adapter may pause.")
             self.monitor_btn.configure(state="normal" if not self.proc else "disabled")
             self.managed_btn.configure(state="disabled")
-            self.start_btn.configure(state="disabled")
-            self.scan_start_btn.configure(state="disabled")
+            self.start_btn.configure(state="normal" if name and not self.proc else "disabled")
+            self.scan_start_btn.configure(state="normal" if name and not self.proc else "disabled")
             self.scan_state.configure(text=f"{name} is in MANAGED mode · enable monitor mode in Setup")
         else:
             self.iface_info.configure(text=f"Selected {name or 'no adapter'}: mode is {mode}. Refresh the adapter list.")
             self.monitor_btn.configure(state="normal" if name else "disabled")
             self.managed_btn.configure(state="disabled")
-            self.start_btn.configure(state="disabled")
-            self.scan_start_btn.configure(state="disabled")
+            self.start_btn.configure(state="normal" if name and not self.proc else "disabled")
+            self.scan_start_btn.configure(state="normal" if name and not self.proc else "disabled")
             self.scan_state.configure(text="Select a monitor-mode adapter in Setup")
 
     def enable_monitor(self):
@@ -828,12 +830,14 @@ class AirWatch(tk.Tk):
             self.sync_workflow_action()
             return
         if self.selected_target and self.selected_target['bssid']!=values[0]:
-            if self.recovery_panel.job_running or (self.proc and self.capture_focused):
+            if self.proc and self.capture_focused:
                 old=self.selected_target['bssid']
                 if old in self.table.get_children():self.table.selection_set(old)
                 return
-            self.recovery_panel.ready_hash=None
-            self.recovery_panel.analysis_var.set("Target changed. Analyze a capture for this access point before recovery.")
+            if not self.recovery_panel.job_running:
+                self.recovery_panel.ready_hash=None
+                self.recovery_panel.ready_target_bssid=None
+                self.recovery_panel.analysis_var.set("Target changed. Analyze a capture for this access point before recovery.")
             self.coach_panel.snapshot=None
         self.selected_target={"bssid":values[0],"channel":values[1],"security":values[2],"signal":values[3],"essid":values[4]}
         self.client_suitability.select(self.selected_target)
@@ -849,14 +853,15 @@ class AirWatch(tk.Tk):
         if self.proc and self.capture_focused:
             self.learn.insert("end","\n\nCAPTURE IS ALREADY RUNNING\nThe radio stays on the selected channel. Use Stop & analyze to move forward. Use Reconnect devices for one device or an explicitly confirmed whole-network burst. The handshake status above tells you when evidence arrives.\n\nWPA2-PERSONAL CHECK\nAn access point can support WPA2 while a connected device uses another authentication mode. The recovery test requires a WPA2-PSK exchange from the specific client. Protected management frames may reject disconnect requests.")
         self.learn.configure(state="disabled")
-        self.recovery_panel.target_var.set(f"Selected: {t['essid']}  ·  {t['bssid']}")
+        if not self.recovery_panel.job_running:
+            self.recovery_panel.target_var.set(f"Selected: {t['essid']}  ·  {t['bssid']}")
         self._log(f"Selected access point {t['essid']} ({t['bssid']}).")
 
     def go_next(self):
         if self.admin_busy or self.stopping or self.pending_focused:return
         if self.proc and self.capture_focused:
             self.stop_capture();return
-        if not self.proc and (self.recovery_panel.ready_hash or (self.capture_focused and self.capture_prefix)):
+        if not self.proc and (self.recovery_panel.ready_for_current_target() or (self.capture_focused and self.capture_prefix)):
             self.main_tabs.select(self.recovery_panel)
             if not self.recovery_panel.ready_hash:self.recovery_panel.on_capture_finished()
             return
@@ -890,9 +895,6 @@ class AirWatch(tk.Tk):
             if not self.client_suitability.can_capture():
                 messagebox.showinfo(APP,self.client_suitability.state()[1]);return
         self.emergency_active=False
-        if self.recovery_panel.job_running:
-            messagebox.showinfo(APP, "Stop the current Hashcat run before starting another capture.")
-            return
         iface=self.interface.get()
         if not iface: messagebox.showerror(APP,"Select a wireless interface first."); return
         mode=self.interfaces.get(iface,{}).get("mode")
@@ -907,6 +909,7 @@ class AirWatch(tk.Tk):
         self.capture_prefix=str(folder / (time.strftime("capture_%Y%m%d_%H%M%S_")+uuid.uuid4().hex[:8]))
         if not self.recovery_panel.job_running:
             self.recovery_panel.ready_hash=None
+            self.recovery_panel.ready_target_bssid=None
             self.recovery_panel.analysis_var.set("Waiting for the new capture.")
         if not focused:
             self.selected_target=None
@@ -1062,10 +1065,12 @@ class AirWatch(tk.Tk):
                 elif self.pending_scan_recovery and not self.closing and not self.emergency_active:
                     self.pending_scan_recovery=False
                     self.coach_panel.use_current()
-                    self.recovery_panel.on_capture_finished()
+                    if self.recovery_panel.job_running:self.recovery_panel.defer_capture(self.capture_prefix,self.selected_target)
+                    else:self.recovery_panel.on_capture_finished()
                 elif self.capture_focused and not self.closing and not self.emergency_active and not self.restoring_wifi:
                     self.coach_panel.use_current()
-                    self.recovery_panel.on_capture_finished()
+                    if self.recovery_panel.job_running:self.recovery_panel.defer_capture(self.capture_prefix,self.selected_target)
+                    else:self.recovery_panel.on_capture_finished()
         except Exception as e:
             self._log(f"Could not stop capture: {e}")
             # Retain the process handle so Stop can be retried after a failure.

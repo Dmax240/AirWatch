@@ -89,6 +89,8 @@ class GuidedView(ttk.Frame):
         bar=ttk.Frame(self.network,style='Card.TFrame');bar.pack(fill='x',pady=(0,10))
         ttk.Label(bar,text='Nearby Wi-Fi',style='CardHead.TLabel').pack(side='left')
         self.scan_stop=ttk.Button(bar,text='■ Stop scan',command=app_stop(self.app));self.scan_stop.pack(side='right')
+        self.scan_start=ttk.Button(bar,text='⌕ Find networks',command=self.start_network_scan)
+        self.scan_start.pack(side='right',padx=(0,8))
         search_row=ttk.Frame(self.network,style='Card.TFrame');search_row.pack(fill='x',pady=(0,10))
         ttk.Label(search_row,text='Search',style='Card.TLabel').pack(side='left',padx=(0,10))
         self.search_entry=ttk.Entry(search_row,textvariable=self.network_filter)
@@ -116,6 +118,7 @@ class GuidedView(ttk.Frame):
         self.reconnect_panel.pack(fill='x')
         self.recover=ttk.Frame(self.body,style='Card.TFrame',padding=20)
         ttk.Label(self.recover,text='Try a password search',style='CardHead.TLabel').pack(anchor='w')
+        self.new_capture_btn=ttk.Button(self.recover,text='Check new capture',command=self.recovery.analyze_pending_capture)
         row=ttk.Frame(self.recover,style='Card.TFrame');row.pack(fill='x',pady=(12,8))
         self.pattern_box=ttk.Combobox(row,textvariable=self.pattern,values=('10-digit number','Wordlist','Custom pattern'),state='readonly',width=22)
         self.pattern_box.pack(side='left');self.pattern_box.bind('<<ComboboxSelected>>',self.choose_pattern)
@@ -236,22 +239,36 @@ class GuidedView(ttk.Frame):
             raise RuntimeError('The adapter did not enter capture mode. Open Advanced → Adapter diagnostics.')
         return True
 
+    def start_network_scan(self):
+        app=self.app
+        if app.proc or app.admin_busy or app.stopping:return
+        self.notice=''
+        try:
+            if self.prepare_adapter():
+                app.start_capture()
+                if app.proc:app.navigate('Networks')
+        except Exception as exc:
+            self.notice=str(exc)
+            app.navigate('Networks')
+
     def act(self):
         app=self.app;r=self.recovery
         if app.admin_busy or app.stopping or app.pending_focused:return
         self.notice=''
         try:
+            if self.visible_section=='network':
+                if app.proc and not app.capture_focused:app.stop_capture()
+                elif app.proc:app.navigate('Capture')
+                else:self.start_network_scan()
+                return
             if self.visible_section!='network' and not app.selected_target:
                 app.navigate('Networks');return
-            if (r.job_running or r.ready_hash) and self.visible_section!='recovery':
-                app.navigate('Recovery');return
-            if self.visible_section=='recovery' and not (r.job_running or r.ready_hash):
+            if self.visible_section=='recovery':
+                if r.job_running:r.pause_save();return
+                if r.saved_session:r.resume_saved();return
+                if r.ready_hash:r.start_attack();return
                 app.navigate('Capture' if app.selected_target else 'Networks');return
-            if r.job_running:r.pause_save();return
-            if r.saved_session:r.resume_saved();return
             if app.proc and app.capture_focused:app.stop_capture();return
-            if r.ready_hash:
-                r.start_attack();return
             if app.selected_target:
                 app.client_suitability.refresh()
                 if app.proc and not app.capture_focused and app.client_suitability.complete_record_observed():
@@ -268,8 +285,6 @@ class GuidedView(ttk.Frame):
         except Exception as exc:self.notice=str(exc)
 
     def back_to_network(self):
-        if self.recovery.job_running:
-            self.notice='Stop the recovery search before choosing another network.';return
         if self.app.proc:
             if self.app.pending_network_return:return
             if not messagebox.askyesno('Choose another network?','Stop and save the current capture, then return to network selection?'):
@@ -280,7 +295,10 @@ class GuidedView(ttk.Frame):
         self.reset_to_network()
 
     def reset_to_network(self):
-        self.app.selected_target=None;self.app.capture_focused=False;self.recovery.ready_hash=None
+        self.app.selected_target=None;self.app.capture_focused=False
+        if not self.recovery.job_running:
+            self.recovery.ready_hash=None
+            self.recovery.ready_target_bssid=None
         self.app.coach_panel.snapshot=None;self.notice=''
         self.app.pending_network_return=False
         self.app.client_suitability.select(None)
@@ -347,8 +365,18 @@ class GuidedView(ttk.Frame):
         detail='Tap Find networks to start.'
         action='⌕ Find networks'
         context='LET’S BEGIN'
-        if r.job_running or r.ready_hash or r.saved_session:
-            section='recovery';stage=2;context=target['essid'] if target else 'SAVED CAPTURE'
+        if self.visible_section=='network':
+            if app.proc:
+                title='Finding networks…' if not app.capture_focused else 'Capture is running'
+                detail='Choose a network below.' if not app.capture_focused else 'Stop capture before starting a new scan.'
+                action='■ Stop scan' if not app.capture_focused else '◉ Open Capture'
+            else:
+                title='Find another network' if r.job_running else 'Pick your Wi-Fi network'
+                detail='Your password search keeps running.' if r.job_running else 'Tap Find networks to start.'
+                action='⌕ Find networks'
+        elif (r.job_running or r.ready_hash or r.saved_session) and self.visible_section=='recovery':
+            recovery_target=r.active_target or target
+            section='recovery';stage=2;context=recovery_target['essid'] if recovery_target else 'SAVED CAPTURE'
             if r.job_running:
                 title='Trying passwords…';detail='Pause & save lets you close AirWatch and resume later.';action='Ⅱ Pause & save'
             elif r.saved_session:
@@ -384,8 +412,7 @@ class GuidedView(ttk.Frame):
         elif app.proc:
             title='Select your network below';detail='Scanning nearby networks. Select the one you own or are authorized to test.';action='Select a network';enabled=False
         if self.visible_section is None:self.set_section(section)
-        if section=='recovery' and self.visible_section!='recovery':action='◇ Open Recovery'
-        elif self.visible_section!='network' and not target:
+        if self.visible_section!='network' and not target and self.visible_section!='recovery':
             action='⌁ Open Networks';enabled=True
         elif self.visible_section=='recovery' and section!='recovery':
             action='◉ Open Capture'
@@ -397,10 +424,16 @@ class GuidedView(ttk.Frame):
         if target:
             if not self.back_btn.winfo_manager():self.back_btn.pack(side='right',padx=(0,8),before=self.advanced_btn)
             self.back_btn.configure(text='Stop & choose network…' if app.proc else '← Choose another network')
-            self.back_btn.state(['disabled'] if r.job_running or locked or app.pending_network_return else ['!disabled'])
+            self.back_btn.state(['disabled'] if locked or app.pending_network_return else ['!disabled'])
         else:self.back_btn.pack_forget()
-        self.reconnect_toggle.state(['disabled'] if r.job_running or not app.client_suitability.can_capture() else ['!disabled'])
+        self.reconnect_toggle.state(['disabled'] if not app.client_suitability.can_capture() else ['!disabled'])
         self.scan_stop.state(['!disabled'] if app.proc and not app.capture_focused and not locked else ['disabled'])
+        self.scan_start.state(['!disabled'] if not app.proc and not locked else ['disabled'])
+        if r.pending_capture:
+            if not self.new_capture_btn.winfo_manager():self.new_capture_btn.pack(anchor='w',pady=(10,0))
+            self.new_capture_btn.configure(text='Check new capture' if not r.job_running else 'New capture saved · check after search')
+            self.new_capture_btn.state(['disabled'] if r.job_running else ['!disabled'])
+        else:self.new_capture_btn.pack_forget()
         raw_rows=tuple((iid,tuple(app.table.item(iid,'values'))) for iid in app.table.get_children())
         wpa2_rows=tuple((iid,v) for iid,v in raw_rows if len(v)>=5 and 'WPA2' in str(v[2]).upper())
         connected={v.get('ssid') for v in app.interfaces.values() if v.get('ssid')}

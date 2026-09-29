@@ -77,6 +77,7 @@ class RecoveryPanel(ttk.Frame):
         self.active_options = None
         self.sample_inflight = False
         self.last_sample_at = 0
+        self.sample_keyspaces = {}
         self.devices=[]
         self.device_var=tk.StringVar(value="Detecting GPUs…")
         self.gpu_status=tk.StringVar(value="Looking for Hashcat devices…")
@@ -842,7 +843,21 @@ class RecoveryPanel(ttk.Frame):
             candidate=None
             process=None
             try:
-                process=subprocess.Popen([HASHCAT,'--stdout','-a','3','--skip',str(point),
+                cache_key=(charset,mask)
+                keyspaces=self.sample_keyspaces.get(cache_key)
+                if not keyspaces:
+                    def base_size(hash_mode):
+                        args=[HASHCAT,'--keyspace','-a','3','-1',charset,mask]
+                        if hash_mode:args[2:2]=['-m',hash_mode]
+                        result=subprocess.run(args,capture_output=True,text=True,timeout=4)
+                        if result.returncode:raise ValueError('Could not read mask keyspace')
+                        return int(result.stdout.strip())
+                    keyspaces=(base_size('22000'),base_size(None))
+                    self.sample_keyspaces[cache_key]=keyspaces
+                target_base,stdout_base=keyspaces
+                if not target_base or not stdout_base:raise ValueError('Empty mask keyspace')
+                sample_point=min(stdout_base-1,point*stdout_base//target_base)
+                process=subprocess.Popen([HASHCAT,'--stdout','-a','3','--skip',str(sample_point),
                                           '--limit','1','-1',charset,mask],
                                          stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
                                          start_new_session=True)
